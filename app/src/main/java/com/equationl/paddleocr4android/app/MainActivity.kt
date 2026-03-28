@@ -1,23 +1,64 @@
 package com.equationl.paddleocr4android.app
 
+import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import android.util.Log
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
+import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.equationl.paddleocr4android.CpuPowerMode
 import com.equationl.paddleocr4android.OCR
 import com.equationl.paddleocr4android.OcrConfig
 import com.equationl.paddleocr4android.bean.OcrResult
 import com.equationl.paddleocr4android.callback.OcrInitCallback
 import com.equationl.paddleocr4android.callback.OcrRunCallback
+import java.io.InputStream
 
 class MainActivity : AppCompatActivity() {
     private val TAG = "el, Main"
 
     private lateinit var ocr: OCR
+    private var isModelInitialized = false
+    private var lastRecognizedText = ""
+
+    private lateinit var resultImg: ImageView
+    private lateinit var resultText: TextView
+    private lateinit var statusText: TextView
+    private lateinit var copyBtn: Button
+    private lateinit var selectImageBtn: Button
+
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.entries.all { it.value }
+        if (allGranted) {
+            openGallery()
+        } else {
+            Toast.makeText(this, "需要存储权限才能选择图片", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private val pickImageLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            processSelectedImage(it)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -26,108 +67,160 @@ class MainActivity : AppCompatActivity() {
         ocr = OCR(this)
 
         val initBtn = findViewById<Button>(R.id.init_model)
-        val startBtn = findViewById<Button>(R.id.start_model)
-        val resultImg = findViewById<ImageView>(R.id.result_img)
-        val resultText = findViewById<TextView>(R.id.result_text)
+        selectImageBtn = findViewById<Button>(R.id.select_image)
+        copyBtn = findViewById<Button>(R.id.copy_text)
+        resultImg = findViewById(R.id.result_img)
+        resultText = findViewById(R.id.result_text)
+        statusText = findViewById(R.id.status_text)
 
         initBtn.setOnClickListener {
-            // 配置
-            val config = OcrConfig()
-            //config.labelPath = null
-
-            config.modelPath = "models/ch_PP-OCRv4" // 不使用 "/" 开头的路径表示安装包中 assets 目录下的文件，例如当前表示 assets/models/ocr_v2_for_cpu
-            //config.modelPath = "/sdcard/Android/data/com.equationl.paddleocr4android.app/files/models" // 使用 "/" 表示手机储存路径，测试时请将下载的三个模型放置于该目录下
-            config.clsModelFilename = "cls.nb" // cls 模型文件名
-            config.detModelFilename = "det.nb" // det 模型文件名
-            config.recModelFilename = "rec.nb" // rec 模型文件名
-
-            // 运行全部模型
-            // 请根据需要配置，三项全开识别率最高；如果只开识别几乎无法正确识别，至少需要搭配检测或分类其中之一
-            // 也可单独运行 检测模型 获取文本位置
-            config.isRunDet = true
-            config.isRunCls = true
-            config.isRunRec = true
-
-            // 使用所有核心运行
-            config.cpuPowerMode = CpuPowerMode.LITE_POWER_FULL
-
-            // 绘制文本位置
-            config.isDrwwTextPositionBox = true
-
-            // 1.同步初始化
-            /*ocr.initModelSync(config).fold(
-                {
-                    if (it) {
-                        Log.i(TAG, "onCreate: init success")
-                    }
-                },
-                {
-                    it.printStackTrace()
-                }
-            )*/
-
-            // 2.异步初始化
-            resultText.text = "开始加载模型"
-            ocr.initModel(config, object : OcrInitCallback {
-                override fun onSuccess() {
-                    resultText.text = "加载模型成功"
-                    Log.i(TAG, "onSuccess: 初始化成功")
-                }
-
-                override fun onFail(e: Throwable) {
-                    resultText.text = "加载模型失败: $e"
-                    Log.e(TAG, "onFail: 初始化失败", e)
-                }
-
-            })
+            initModel()
         }
 
-        startBtn.setOnClickListener {
-            // 1.同步识别
-            /*val bitmap = BitmapFactory.decodeResource(resources, R.drawable.test2)
-            ocr.runSync(bitmap)
-
-            val bitmap2 = BitmapFactory.decodeResource(resources, R.drawable.test3)
-            ocr.runSync(bitmap2)*/
-
-            // 2.异步识别
-            resultText.text = "开始识别"
-            val bitmap3 = BitmapFactory.decodeResource(resources, R.drawable.test4)
-            ocr.run(bitmap3, object : OcrRunCallback {
-                override fun onSuccess(result: OcrResult) {
-                    val simpleText = result.simpleText
-                    val imgWithBox = result.imgWithBox
-                    val inferenceTime = result.inferenceTime
-                    val outputRawResult = result.outputRawResult
-
-                    var text = "识别文字=\n$simpleText\n识别时间=$inferenceTime ms\n更多信息=\n"
-
-                    val wordLabels = ocr.getWordLabels()
-                    outputRawResult.forEachIndexed { index, ocrResultModel ->
-                        // 文字索引（crResultModel.wordIndex）对应的文字可以从字典（wordLabels） 中获取
-                        ocrResultModel.wordIndex.forEach {
-                            Log.i(TAG, "onSuccess: text = ${wordLabels[it]}")
-                        }
-                        // 文字方向 ocrResultModel.clsLabel 可能为 "0" 或 "180"
-                        text += "$index: 文字方向：${ocrResultModel.clsLabel}；文字方向置信度：${ocrResultModel.clsConfidence}；识别置信度 ${ocrResultModel.confidence}；文字索引位置 ${ocrResultModel.wordIndex}；文字位置：${ocrResultModel.points}\n"
-                    }
-
-                    resultText.text = text
-                    resultImg.setImageBitmap(imgWithBox)
-                }
-
-                override fun onFail(e: Throwable) {
-                    resultText.text = "识别失败：$e"
-                    Log.e(TAG, "onFail: 识别失败！", e)
-                }
-
-            })
+        selectImageBtn.setOnClickListener {
+            if (!isModelInitialized) {
+                Toast.makeText(this, "请先初始化模型", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            checkPermissionAndOpenGallery()
         }
+
+        copyBtn.setOnClickListener {
+            copyResultToClipboard()
+        }
+    }
+
+    private fun initModel() {
+        val config = OcrConfig()
+
+        config.modelPath = "models/ch_PP-OCRv4"
+        config.clsModelFilename = "cls.nb"
+        config.detModelFilename = "det.nb"
+        config.recModelFilename = "rec.nb"
+
+        config.isRunDet = true
+        config.isRunCls = true
+        config.isRunRec = true
+
+        config.cpuPowerMode = CpuPowerMode.LITE_POWER_FULL
+        config.isDrwwTextPositionBox = true
+
+        statusText.text = "正在加载模型..."
+        ocr.initModel(config, object : OcrInitCallback {
+            override fun onSuccess() {
+                isModelInitialized = true
+                statusText.text = "模型加载成功，可以开始识别"
+                selectImageBtn.isEnabled = true
+                Log.i(TAG, "onSuccess: 初始化成功")
+                Toast.makeText(this@MainActivity, "模型加载成功", Toast.LENGTH_SHORT).show()
+            }
+
+            override fun onFail(e: Throwable) {
+                statusText.text = "模型加载失败: ${e.message}"
+                Log.e(TAG, "onFail: 初始化失败", e)
+                Toast.makeText(this@MainActivity, "模型加载失败", Toast.LENGTH_SHORT).show()
+            }
+        })
+    }
+
+    private fun checkPermissionAndOpenGallery() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES)
+                == PackageManager.PERMISSION_GRANTED) {
+                openGallery()
+            } else {
+                requestPermissionLauncher.launch(arrayOf(Manifest.permission.READ_MEDIA_IMAGES))
+            }
+        } else {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+                == PackageManager.PERMISSION_GRANTED) {
+                openGallery()
+            } else {
+                requestPermissionLauncher.launch(arrayOf(
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                ))
+            }
+        }
+    }
+
+    private fun openGallery() {
+        pickImageLauncher.launch("image/*")
+    }
+
+    private fun processSelectedImage(uri: Uri) {
+        statusText.text = "正在识别..."
+
+        try {
+            val inputStream: InputStream? = contentResolver.openInputStream(uri)
+            val bitmap = BitmapFactory.decodeStream(inputStream)
+            inputStream?.close()
+
+            if (bitmap == null) {
+                statusText.text = "无法读取图片"
+                return
+            }
+
+            resultImg.setImageBitmap(bitmap)
+            runOcr(bitmap)
+        } catch (e: Exception) {
+            statusText.text = "读取图片失败: ${e.message}"
+            Log.e(TAG, "processSelectedImage: ", e)
+        }
+    }
+
+    private fun runOcr(bitmap: Bitmap) {
+        ocr.run(bitmap, object : OcrRunCallback {
+            override fun onSuccess(result: OcrResult) {
+                val simpleText = result.simpleText
+                val imgWithBox = result.imgWithBox
+                val inferenceTime = result.inferenceTime
+                val outputRawResult = result.outputRawResult
+
+                lastRecognizedText = simpleText
+
+                val displayText = StringBuilder()
+                displayText.append("识别结果：\n")
+                displayText.append(simpleText)
+                displayText.append("\n\n识别时间: ${inferenceTime}ms")
+                displayText.append("\n识别到 ${outputRawResult.size} 个文本区域")
+
+                resultText.text = displayText.toString()
+                resultImg.setImageBitmap(imgWithBox)
+                statusText.text = "识别完成"
+                copyBtn.isEnabled = true
+
+                val wordLabels = ocr.getWordLabels()
+                outputRawResult.forEachIndexed { index, ocrResultModel ->
+                    ocrResultModel.wordIndex.forEach {
+                        Log.i(TAG, "onSuccess: text = ${wordLabels[it]}")
+                    }
+                }
+            }
+
+            override fun onFail(e: Throwable) {
+                statusText.text = "识别失败: ${e.message}"
+                resultText.text = ""
+                copyBtn.isEnabled = false
+                Log.e(TAG, "onFail: 识别失败！", e)
+            }
+        })
+    }
+
+    private fun copyResultToClipboard() {
+        if (lastRecognizedText.isEmpty()) {
+            Toast.makeText(this, "没有可复制的内容", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText("OCR识别结果", lastRecognizedText)
+        clipboard.setPrimaryClip(clip)
+        Toast.makeText(this, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        // 释放
         ocr.releaseModel()
     }
 }
