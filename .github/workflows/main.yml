@@ -49,8 +49,29 @@ jobs:
       - name: Build Demo Release APK
         run: ./gradlew :ncnndemo:assembleRelease --no-daemon --stacktrace
 
+      - name: Restore keystore from secret
+        run: |
+          echo "${{ secrets.KEYSTORE_B64 }}" | base64 --decode > upload-keystore.jks
+          ls -lh upload-keystore.jks
+
+      - name: Sign APK with apksigner
+        run: |
+          $ANDROID_HOME/build-tools/34.0.0/apksigner sign \
+            --ks upload-keystore.jks \
+            --ks-key-alias "${{ secrets.KEYSTORE_ALIAS }}" \
+            --ks-pass "pass:${{ secrets.KEYSTORE_STORE_PASSWORD }}" \
+            --key-pass "pass:${{ secrets.KEYSTORE_KEY_PASSWORD }}" \
+            --out ncnndemo-signed.apk \
+            ncnndemo/build/outputs/apk/release/ncnndemo-release-unsigned.apk
+
+      # 👇 4. 验证签名是否成功
+      - name: Verify APK signature
+        run: |
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --verbose ncnndemo-signed.apk
+
+          
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ncnndemo-release-unsigned.apk
-          path: ncnndemo/build/outputs/apk/release/ncnndemo-release-unsigned.apk
+          name: ncnndemo-signed.apk
+          path: ncnndemo-signed.apk
