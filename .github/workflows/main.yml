@@ -24,6 +24,11 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install CMake 3.10.2 via sdkmanager
+        run: |
+            echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "cmake;3.10.2.4988404"
+            ls -la $ANDROID_HOME/cmake/
+
       # 👇 关键步骤：从 ncnn-android-ppocrv5 仓库下载模型文件
       - name: Download PP-OCRv5 Mobile Models
         run: |
@@ -38,6 +43,8 @@ jobs:
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
+
+      
 
       - name: Build Demo Release APK
         run: ./gradlew :ncnndemo:assembleRelease --no-daemon --stacktrace
