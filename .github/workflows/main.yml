@@ -1,0 +1,49 @@
+name: Build Demo APK with Models
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout paddleocr4android
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # 👇 关键步骤：从 ncnn-android-ppocrv5 仓库下载模型文件
+      - name: Download PP-OCRv5 Mobile Models
+        run: |
+          mkdir -p ncnndemo/src/main/assets
+          cd ncnndemo/src/main/assets
+          # 下载四个模型文件（使用 raw.githubusercontent.com）
+          wget https://raw.githubusercontent.com/welnstar/ncnn-android-ppocrv5/master/app/src/main/assets/PP_OCRv5_mobile_det.ncnn.param
+          wget https://raw.githubusercontent.com/welnstar/ncnn-android-ppocrv5/master/app/src/main/assets/PP_OCRv5_mobile_det.ncnn.bin
+          wget https://raw.githubusercontent.com/welnstar/ncnn-android-ppocrv5/master/app/src/main/assets/PP_OCRv5_mobile_rec.ncnn.param
+          wget https://raw.githubusercontent.com/welnstar/ncnn-android-ppocrv5/master/app/src/main/assets/PP_OCRv5_mobile_rec.ncnn.bin
+          ls -lh
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      - name: Build Demo Release APK
+        run: ./gradlew :ncnndemo:assembleRelease --no-daemon --stacktrace
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ncnndemo-release-unsigned.apk
+          path: ncnndemo/build/outputs/apk/release/ncnndemo-release-unsigned.apk
